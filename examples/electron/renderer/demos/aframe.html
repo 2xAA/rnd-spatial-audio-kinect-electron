@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>AFRAME spatial audio</title>
+  <link rel="stylesheet" href="../assets/vendors/bootstrap-4.3.1-dist/css/bootstrap.css">
+  <link rel="stylesheet" href="../assets/vendors/bootstrap-4.3.1-dist/css/docs.min.css">
+
+  <script>
+    require('aframe');
+    require('aframe-look-at-component');
+    const lerp = require('lerp');
+    require('../assets/components/rotate.js');
+
+    function map(x, in_min, in_max, out_min, out_max) {
+      return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+    }
+
+    const minSliderHeight = 0.5;
+    const maxSliderHeight = 2.5;
+    const minVolume = 0;
+    const maxVolume = 5;
+    const minSoundBoxScale = 0.1;
+    const maxSoundBoxScale = 2;
+
+    const parts = ["drums", "percussion", "bass", "vocal-ahhs", "vocal-stabs", "sitar", "vocals", "extra"];
+    const colors = [
+      "#498e93",
+      "#336467",
+      "#dffdff",
+      "#bffbff",
+      "#936749",
+      "#674833",
+      "#ffecdf",
+      "#ffd9bf",
+    ];
+
+    const state = {
+      LEFT_HAND_STATE: 0,
+      RIGHT_HAND_STATE: 0,
+
+      LEFT_HAND_X: 0,
+      LEFT_HAND_Y: 0,
+      LEFT_HAND_Z: 0,
+
+      RIGHT_HAND_X: 0,
+      RIGHT_HAND_Y: 0,
+      RIGHT_HAND_Z: 0,
+
+      LEFT_HAND_WHEN_CLOSED_X: null,
+      LEFT_HAND_WHEN_CLOSED_Y: null,
+      LEFT_HAND_WHEN_CLOSED_Z: null,
+
+      RIGHT_HAND_WHEN_CLOSED_X: null,
+      RIGHT_HAND_WHEN_CLOSED_Y: null,
+      RIGHT_HAND_WHEN_CLOSED_Z: null,
+
+      OBJECT_UNDER_LEFT_HAND: null,
+      OBJECT_UNDER_RIGHT_HAND: null,
+
+      LEFT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED: null,
+      RIGHT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED: null,
+    };
+
+    parts.forEach((part, index) => {
+      state[`${part}_VOLUME`] = 0.5;
+      state[`${part}_SCALE`] = map(0.5, minVolume, maxVolume, minSoundBoxScale, maxSoundBoxScale);
+    });
+
+    window.state = state;
+
+    AFRAME.registerComponent('collider', {
+      dependencies: ['raycaster'],
+
+      init: function () {
+        this.el.addEventListener('raycaster-intersected', (e) => {
+          if (e.detail.el === leftHand && state.LEFT_HAND_STATE !== Kinect2.HandState.closed) {
+            state.OBJECT_UNDER_LEFT_HAND = e.target;
+          }
+
+          if (e.detail.el === rightHand && state.RIGHT_HAND_STATE !== Kinect2.HandState.closed) {
+            state.OBJECT_UNDER_RIGHT_HAND = e.target;
+          }
+        });
+
+        this.el.addEventListener('raycaster-intersected-cleared', (e) => {
+          if (e.detail.el === leftHand && state.OBJECT_UNDER_LEFT_HAND === e.target && state.LEFT_HAND_STATE !== Kinect2.HandState.closed) {
+            state.OBJECT_UNDER_LEFT_HAND = null;
+          }
+
+          if (e.detail.el === rightHand && state.OBJECT_UNDER_RIGHT_HAND === e.target && state.RIGHT_HAND_STATE !== Kinect2.HandState.closed) {
+            state.OBJECT_UNDER_RIGHT_HAND = null;
+          }
+        });
+      }
+    });
+
+    AFRAME.registerComponent('volume-controller', {
+      tick() {
+        if (state.OBJECT_UNDER_LEFT_HAND && state.LEFT_HAND_STATE === Kinect2.HandState.closed) {
+          if (state.LEFT_HAND_WHEN_CLOSED_Y === null) {
+            state.LEFT_HAND_WHEN_CLOSED_Y = state.LEFT_HAND_Y;
+            state.LEFT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED = state.OBJECT_UNDER_LEFT_HAND.object3D.scale.y;
+          }
+
+          const yDifference = (state.LEFT_HAND_Y - state.LEFT_HAND_WHEN_CLOSED_Y) * 8;
+
+          let newY = Math.abs(state.LEFT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED + yDifference);
+          newY = Math.min(Math.max(newY, minSliderHeight), maxSliderHeight);
+
+          state.OBJECT_UNDER_LEFT_HAND.setAttribute('scale', { x: 0.5, y: newY, z: 0.5 });
+
+
+          const volume = map(newY, minSliderHeight, maxSliderHeight, minVolume, maxVolume);
+
+          const sound = state.OBJECT_UNDER_LEFT_HAND.dataset.sound;
+          const soundBox = document.getElementById(`soundbox-${sound}`);
+          soundBox.components.sound.pool.children.forEach((sound) => {
+            sound.setVolume(volume);
+          });
+
+          state[`${sound}_SCALE`] = map(volume, minVolume, maxVolume, minSoundBoxScale, maxSoundBoxScale);
+        }
+
+        if (state.OBJECT_UNDER_LEFT_HAND && state.LEFT_HAND_STATE === Kinect2.HandState.open) {
+          state.LEFT_HAND_WHEN_CLOSED_Y = null;
+          state.LEFT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED = null;
+        }
+
+        if (state.OBJECT_UNDER_RIGHT_HAND && state.RIGHT_HAND_STATE === Kinect2.HandState.closed) {
+          if (state.RIGHT_HAND_WHEN_CLOSED_Y === null) {
+            state.RIGHT_HAND_WHEN_CLOSED_Y = state.RIGHT_HAND_Y;
+            state.RIGHT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED = state.OBJECT_UNDER_RIGHT_HAND.object3D.scale.y;
+          }
+
+          const yDifference = (state.RIGHT_HAND_Y - state.RIGHT_HAND_WHEN_CLOSED_Y) * 8;
+
+          let newY = state.RIGHT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED + yDifference;
+          newY = Math.min(Math.max(newY, minSliderHeight), maxSliderHeight);
+
+          state.OBJECT_UNDER_RIGHT_HAND.setAttribute('scale', { x: 0.5, y: newY, z: 0.5 });
+
+          const volume = map(newY, minSliderHeight, maxSliderHeight, minVolume, maxVolume);
+
+          const sound = state.OBJECT_UNDER_RIGHT_HAND.dataset.sound;
+          const soundBox = document.getElementById(`soundbox-${sound}`);
+          soundBox.components.sound.pool.children.forEach((sound) => {
+            sound.setVolume(volume);
+          });
+
+          state[`${sound}_SCALE`] = map(volume, minVolume, maxVolume, minSoundBoxScale, maxSoundBoxScale);
+        }
+
+        parts.forEach((part) => {
+          const soundBox = document.getElementById(`soundbox-${part}`);
+          const soundBoxScale = lerp(soundBox.getAttribute('scale').y, state[`${part}_SCALE`], 0.2);
+          soundBox.setAttribute("scale", { x: soundBoxScale, y: soundBoxScale, z: soundBoxScale });
+        });
+
+        if (state.OBJECT_UNDER_RIGHT_HAND && state.RIGHT_HAND_STATE === Kinect2.HandState.open) {
+          state.RIGHT_HAND_WHEN_CLOSED_Y = null;
+          state.RIGHT_HAND_OBJECT_SCALE_Y_WHEN_CLOSED = null;
+        }
+      }
+    })
+  </script>
+</head>
+
+<body class="container-fluid py-3">
+  <a-scene volume-controller>
+    <a-assets>
+    </a-assets>
+
+    <a-entity id="instant-group" rotation="0 0 0" position="0 1.5 0"></a-entity>
+
+    <a-sky color="#ffaaff"></a-sky>
+    <a-camera>
+      <a-entity position="0 .1 -.5" id="player">
+        <a-sphere id="left-hand" scale="0.03 0.03 0.03" raycaster="objects: .collidable; showLine: true; far: 1000;
+          lineColor: red; lineOpacity: 0.5">
+        </a-sphere>
+        <a-sphere id="right-hand" scale="0.03 0.03 0.03"
+          raycaster="objects: .collidable; showLine: true; far: 1000; lineColor: red; lineOpacity: 0.5">
+        </a-sphere>
+      </a-entity>
+    </a-camera>
+  </a-scene>
+
+  <script>
+    const Kinect2 = require('kinect2');
+    const kinect = new Kinect2();
+
+    let leftHand;
+    let rightHand;
+    let feedOpen = false;
+
+    // closed hand state color
+    const HANDCLOSEDCOLOR = "red";
+
+    // open hand state color
+    const HANDOPENCOLOR = "green";
+
+    // lasso hand state color
+    const HANDLASSOCOLOR = "blue";
+
+    const init = async () => {
+      leftHand = document.getElementById('left-hand');
+      rightHand = document.getElementById('right-hand');
+
+
+      const outerRadius = 2;
+      const startAngle = THREE.MathUtils.degToRad(227);
+      const objectCount = 8;
+      const circleX = 0;
+      const circleZ = 0;
+
+      const rotateButton = document.getElementById("rotate");
+      const instantGroup = document.getElementById("instant-group");
+
+      const sounds = [];
+      const soundsReady = [];
+      const soundElements = [];
+      const soundElementsLoaded = [];
+
+      for (let i = 0; i < objectCount; i += 1) {
+        const ang = i * (THREE.MathUtils.degToRad(100) / objectCount) + startAngle;
+
+        const ent = document.createElement("a-entity");
+        const box = document.createElement("a-box");
+        const soundBoxContainer = document.createElement("a-entity");
+        soundBoxContainer.classList.add("soundbox-container");
+        const soundBox = document.createElement("a-box");
+        const text = document.createElement("a-text");
+        const text2 = document.createElement("a-text");
+
+        ent.appendChild(box);
+        ent.appendChild(text);
+
+        box.setAttribute("scale", `0.5 ${map(0.5, minVolume, maxVolume, minSliderHeight, maxSliderHeight)} 0.5`);
+        box.setAttribute("color", colors[i]);
+        box.classList.add("collidable");
+        box.dataset.sound = parts[i];
+        box.setAttribute('collider', '')
+
+        text.setAttribute("position", "0 1.5 0");
+        text.setAttribute("align", "center");
+
+        ent.setAttribute("look-at", "[camera]");
+
+        soundBoxContainer.appendChild(soundBox);
+        soundBoxContainer.setAttribute("rotate", {});
+
+        soundBox.setAttribute("position", { x: 6.5, y: 0, z: 0 });
+        soundBox.setAttribute("id", "soundbox-" + parts[i]);
+        const soundBoxScale = state[`${parts[i]}_SCALE`];
+        soundBox.setAttribute("scale", { x: soundBoxScale, y: soundBoxScale, z: soundBoxScale });
+        soundBox.setAttribute("color", colors[i]);
+
+        soundBox.appendChild(text2);
+        text2.setAttribute("position", "0 1 0");
+        text2.setAttribute("align", "center");
+        text2.setAttribute("value", parts[i]);
+        text2.setAttribute("look-at", "[camera]");
+
+        soundElements.push(soundBox);
+        soundElementsLoaded.push(new Promise(resolve => {
+          soundBox.addEventListener("sound-loaded", () => {
+            console.log(`JSCONF INDIA_${i + 1}.mp3 loaded`);
+            resolve();
+          })
+        }));
+
+        const x = Math.cos(ang) * outerRadius + circleX;
+        const y = 0;
+        const z = Math.sin(ang) * outerRadius + circleZ;
+
+        ent.setAttribute("position", `${x * 2} ${y * 2} ${z * 2}`);
+        soundBox.setAttribute("sound", `src: url(../assets/audio/JSCONF INDIA_${i + 1}.mp3); volume: ${state[`${parts[i]}_VOLUME`]};`);
+        text.setAttribute("value", parts[i]);
+
+        instantGroup.appendChild(ent);
+        instantGroup.parentNode.appendChild(soundBoxContainer);
+      }
+
+      await Promise.all(soundElementsLoaded);
+      console.log("ok!");
+
+      soundElements.forEach(el => el.components.sound.playSound());
+
+      startKinect();
+    };
+
+    const setFeedOpen = async (value) => {
+      if (value !== feedOpen) {
+        feedOpen = value;
+        if (feedOpen) {
+          kinect.openBodyReader();
+        } else {
+          await kinect.closeBodyReader();
+        }
+      }
+    }
+    const startKinect = () => {
+      if (kinect.open()) {
+        console.log('kinect open')
+        kinect.on('bodyFrame', (bodyFrame) => {
+          drawBodyFrame(bodyFrame);
+        });
+
+        setFeedOpen(true);
+      }
+    };
+
+    const handStates = [Kinect2.HandState.closed, Kinect2.HandState.open, Kinect2.HandState.lasso];
+
+    const drawBodyFrame = bodyFrame => {
+      let index = 0;
+      const body = bodyFrame.bodies.filter(body => body.tracked)[0];
+      for (const jointType in body.joints) {
+        const joint = body.joints[jointType];
+
+        if (Number(jointType) === Kinect2.JointType.handRight) {
+          const x = joint.cameraX;
+          const y = joint.cameraY;
+          rightHand.setAttribute('position', `${x} ${y} 0`);
+          state.RIGHT_HAND_X = x;
+          state.RIGHT_HAND_Y = y;
+          rightHand.object3D.rotation.y = THREE.MathUtils.degToRad(-joint.cameraX * 100);
+
+          updateHandState(body.rightHandState, rightHand);
+
+          if (handStates.indexOf(body.rightHandState) > -1) {
+            state.RIGHT_HAND_STATE = body.rightHandState;
+          }
+        }
+
+        if (Number(jointType) === Kinect2.JointType.handLeft) {
+          const x = joint.cameraX;
+          const y = joint.cameraY;
+          leftHand.setAttribute('position', `${x} ${y} 0`);
+          state.LEFT_HAND_X = x;
+          state.LEFT_HAND_Y = y;
+          leftHand.object3D.rotation.y = THREE.MathUtils.degToRad(-joint.cameraX * 100);
+
+          updateHandState(body.leftHandState, leftHand);
+
+          if (handStates.indexOf(body.leftHandState) > -1) {
+            state.LEFT_HAND_STATE = body.leftHandState;
+          }
+        }
+        index++;
+      }
+    };
+
+    const updateHandState = (handState, handEntity) => {
+      switch (handState) {
+        case Kinect2.HandState.closed:
+          handEntity.setAttribute('color', HANDCLOSEDCOLOR);
+          break;
+
+        case Kinect2.HandState.open:
+          handEntity.setAttribute('color', HANDOPENCOLOR);
+          break;
+
+        case Kinect2.HandState.lasso:
+          handEntity.setAttribute('color', HANDLASSOCOLOR);
+          break;
+      }
+    }
+
+    // expose the kinect instance to the window object in this demo app to allow the parent window to close it between sessions
+    window.kinect = kinect;
+    document.querySelector('a-scene').addEventListener('loaded', init);
+  </script>
+</body>
+
+</html>
